@@ -228,6 +228,13 @@ namespace EchoPuzzle.Dungeon
         {
             if (!GameUI.IsDungeonMode) { LeaveAim(); return; }
 
+            // 强化三选一界面打开时世界是冻结的（timeScale = 0），武器也不该响应
+            if (DungeonBuffSelectUI.Instance != null && DungeonBuffSelectUI.Instance.IsOpen)
+            {
+                LeaveAim();
+                return;
+            }
+
             if (m_Player == null) m_Player = FindObjectOfType<PlayerController>();
             if (m_Player == null) { LeaveAim(); return; }
 
@@ -394,21 +401,39 @@ namespace EchoPuzzle.Dungeon
 
         private void Fire()
         {
+            // ── 0) 先把 buff 的乘区取出来（没拿过 buff 全是 1）──
+            DungeonBuffState buffs = DungeonBuffState.Instance;
+
+            float dmgMul   = buffs != null ? buffs.DamageMul      : 1f;
+            float rateMul  = buffs != null ? buffs.FireRateMul    : 1f;
+            float manaMul  = buffs != null ? buffs.ManaCostMul    : 1f;
+            float killMul  = buffs != null ? buffs.KillManaMul    : 1f;
+            float speedMul = buffs != null ? buffs.BulletSpeedMul : 1f;
+            float widthMul = buffs != null ? buffs.BulletWidthMul : 1f;
+
+            int   cost     = Mathf.Max(0, Mathf.RoundToInt(manaCost * manaMul));
+            int   dmg      = Mathf.Max(1, Mathf.RoundToInt(damage * dmgMul));
+            int   killBack = Mathf.Max(0, Mathf.RoundToInt(killManaRestore * killMul));
+
+            // 射速：fireRateMul 是倍率，间隔要反过来除
+            float interval = Mathf.Max(0.02f, fireInterval / Mathf.Max(0.1f, rateMul));
+
             // 1) 蓝不够就不打，也不占用节流（免得没蓝时连按把节奏卡死）
             DungeonMana mana = DungeonMana.Instance;
-            if (mana != null && !mana.CanAfford(manaCost)) return;
-            if (mana != null && manaCost > 0 && !mana.TrySpend(manaCost)) return;
+            if (mana != null && !mana.CanAfford(cost)) return;
+            if (mana != null && cost > 0 && !mana.TrySpend(cost)) return;
 
             // 2) 节流
-            m_NextFireTime = Time.timeSinceLevelLoad + Mathf.Max(0.02f, fireInterval);
+            m_NextFireTime = Time.timeSinceLevelLoad + interval;
 
             // 3) 出膛：方向完全由 AimYaw 决定，和相机没关系
             Vector3 dir    = AimDirection();
             Vector3 muzzle = MuzzlePosition(dir);
 
             DungeonBullet.Spawn(muzzle, dir,
-                                bulletSpeed, bulletRange, bulletWidth, bulletFadeTime,
-                                damage, killManaRestore,
+                                bulletSpeed * speedMul, bulletRange,
+                                bulletWidth * widthMul, bulletFadeTime,
+                                dmg, killBack,
                                 monsterHurtRadius, monsterHurtHeight,
                                 m_BulletMat);
 

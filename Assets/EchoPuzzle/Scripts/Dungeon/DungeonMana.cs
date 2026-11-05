@@ -32,6 +32,13 @@ namespace EchoPuzzle.Dungeon
         /// <summary>上限（至少 1，避免除零）。</summary>
         public int Max => Mathf.Max(1, maxMana);
 
+        /// <summary>
+        /// 代码里配置的**原始**上限（buff 加成的基准）。
+        /// <see cref="SetMax"/> 只改 <see cref="maxMana"/>，不会动它，
+        /// 这样 buff 叠加时永远是在原始值上加，不会越加越多。
+        /// </summary>
+        public int BaseMax { get; private set; }
+
         /// <summary>0~1，给 HUD 画条用。</summary>
         public float Ratio01 => Mathf.Clamp01((float)Current / Max);
 
@@ -48,6 +55,8 @@ namespace EchoPuzzle.Dungeon
             }
 
             Instance = this;
+
+            BaseMax = Max;
 
             Current = Mathf.Clamp(startMana, 0, Max);
             Changed?.Invoke(Current, Max);

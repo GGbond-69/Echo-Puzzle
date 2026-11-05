@@ -1510,6 +1510,10 @@ namespace EchoPuzzle
             //
             //   之前漏了这一步：重开一局后蓝条停在上一局剩下的数值，
             //   只有重启整个播放进程（Instance 重建）才会回到满蓝。
+            //
+            //   ★ 顺序：先清强化（它会把蓝上限还原到基准值），再复位蓝量。
+            //     反过来的话，上限还带着 buff 的加成，复位出来的数值会偏高。
+            if (Dungeon.DungeonBuffState.Instance != null) Dungeon.DungeonBuffState.Instance.Clear();
             if (Dungeon.DungeonMana.Instance != null) Dungeon.DungeonMana.Instance.ResetMana();
 
             // 音乐停止并复位（否则上一局的音乐会在新一局继续播）
