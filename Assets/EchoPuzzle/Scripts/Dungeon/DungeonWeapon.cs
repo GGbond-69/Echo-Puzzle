@@ -102,6 +102,11 @@ namespace EchoPuzzle.Dungeon
         [Tooltip("子弹光带颜色")]
         public Color bulletColor = new Color(0.35f, 0.62f, 1f, 1f);
 
+        [Tooltip("拖尾长度（米）。只画波前身后这么长的一段。\n\n" +
+                 "★ 太长（比如跟射程一样）时，每秒好几发会首尾相接，\n" +
+                 "看起来像一根连续的光柱，会让人误以为“发射没有间隔”。")]
+        [Min(0.2f)] public float bulletTrailLength = 4f;
+
         [Tooltip("命中后拖尾淡出所需时间（秒）")]
         [Min(0.05f)] public float bulletFadeTime = 0.5f;
 
@@ -265,6 +270,9 @@ namespace EchoPuzzle.Dungeon
 
         private void Update()
         {
+            // 只让单例驱动：万一场景里混进了第二个武器组件，不会变成双倍射速
+            if (Instance != this) return;
+
             if (!GameUI.IsDungeonMode) { LeaveAim(); return; }
 
             // 强化三选一界面打开时世界是冻结的（timeScale = 0），武器也不该响应
@@ -457,15 +465,24 @@ namespace EchoPuzzle.Dungeon
             Vector3 dir    = AimDirection();
             Vector3 muzzle = MuzzlePosition(dir);
 
+            float prevFire = LastFireTime;
+
             DungeonBullet.Spawn(muzzle, dir,
                                 EffectiveBulletSpeed, bulletRange,
                                 EffectiveBulletWidth, bulletFadeTime,
                                 dmg, killBack,
                                 monsterHurtRadius, monsterHurtHeight,
-                                m_BulletMat);
+                                m_BulletMat, bulletTrailLength);
 
             LastFireTime = Time.timeSinceLevelLoad;
             ShotsFired++;
+
+            // 调试：确认两发之间到底隔了多久（打不出间隔时才需要开）
+            if (DungeonBullet.DebugLog)
+            {
+                float gap = prevFire < 0f ? -1f : LastFireTime - prevFire;
+                Debug.Log($"[武器] 第 {ShotsFired} 发，距上一发 {gap:F3}s（设定最小间隔 {EffectiveFireInterval:F3}s）");
+            }
         }
 
         // ------------------------------------------------------------------ 建模

@@ -45,16 +45,17 @@ namespace EchoPuzzle.Dungeon
         /// 发射一颗子弹。
         /// </summary>
         /// <param name="material">拖尾材质（由武器持有并销毁，子弹不负责）</param>
+        /// <param name="trailLength">拖尾长度（米）。只画波前身后这么长的一段，不是整条飞行路径</param>
         public static DungeonBullet Spawn(Vector3 origin, Vector3 dir,
                                           float speed, float range, float width,
                                           float fadeTime, int damage, int manaRestore,
                                           float hurtRadius, float hurtHeight,
-                                          Material material)
+                                          Material material, float trailLength)
         {
             var go = new GameObject("DungeonBullet");
             var b  = go.AddComponent<DungeonBullet>();
             b.Init(origin, dir, speed, range, width, fadeTime, damage, manaRestore,
-                   hurtRadius, hurtHeight, material);
+                   hurtRadius, hurtHeight, material, trailLength);
             return b;
         }
 
@@ -75,6 +76,7 @@ namespace EchoPuzzle.Dungeon
         private float m_HurtHeight;
 
         private float m_Travel;      // 波前已经飞了多远
+        private float m_TrailLength; // 只画波前身后这么长的一段
         private bool  m_Stopped;     // 命中 / 到射程，波前停住
         private float m_FadeTimer;
 
@@ -84,7 +86,7 @@ namespace EchoPuzzle.Dungeon
                           float speed, float range, float width,
                           float fadeTime, int damage, int manaRestore,
                           float hurtRadius, float hurtHeight,
-                          Material material)
+                          Material material, float trailLength)
         {
             m_Origin      = origin;
             m_Dir         = dir.sqrMagnitude > 1e-6f ? dir.normalized : Vector3.forward;
@@ -96,6 +98,12 @@ namespace EchoPuzzle.Dungeon
             m_ManaRestore = Mathf.Max(0, manaRestore);
             m_HurtRadius  = Mathf.Max(0.01f, hurtRadius);
             m_HurtHeight  = Mathf.Max(0.01f, hurtHeight);
+
+            // ★ 拖尾长度：这才是"曳光弹"该有的样子。
+            //   之前画的是「枪口 → 波前」的整条路径（最远 40 米），
+            //   每秒 5 发就会叠成一根连续不断的蓝色光柱 ——
+            //   看起来像"没有发射间隔"，其实是视觉问题。
+            m_TrailLength = Mathf.Clamp(trailLength, 0.2f, range);
 
             m_Line = gameObject.AddComponent<LineRenderer>();
             m_Line.useWorldSpace       = true;
@@ -114,6 +122,7 @@ namespace EchoPuzzle.Dungeon
             m_Line.SetPosition(1, m_Origin);
 
             ApplyWidth(m_Width);
+            ApplySegment(0f);
         }
 
         // ------------------------------------------------------------------ 每帧
@@ -183,7 +192,7 @@ namespace EchoPuzzle.Dungeon
             }
 
             m_Travel = next;
-            m_Line.SetPosition(1, b);
+            ApplySegment(m_Travel);
 
             // 打空到射程尽头：停住、开始淡出
             if (m_Travel >= m_Range - 1e-4f)
@@ -198,7 +207,23 @@ namespace EchoPuzzle.Dungeon
         {
             m_Stopped = true;
             m_Travel  = Mathf.Clamp(distance, 0f, m_Range);
-            m_Line.SetPosition(1, PointAt(m_Travel));
+
+            // 钉住最后的可见段：拖尾留在原地淡出（不是瞬间消失）
+            ApplySegment(m_Travel);
+        }
+
+        /// <summary>
+        /// 把可见段设成 [波前 − 拖尾长度, 波前]。
+        /// 出生点之前的部分自然被夹掉，所以刚出膛时是一小段短光带。
+        /// </summary>
+        private void ApplySegment(float head)
+        {
+            head = Mathf.Clamp(head, 0f, m_Range);
+
+            float tail = Mathf.Max(0f, head - m_TrailLength);
+
+            m_Line.SetPosition(0, PointAt(tail));
+            m_Line.SetPosition(1, PointAt(head));
         }
 
         private void ApplyWidth(float w)
