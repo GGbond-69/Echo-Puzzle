@@ -58,6 +58,42 @@ namespace EchoPuzzle.Dungeon
             if (Instance == this) Instance = null;
         }
 
+        // ------------------------------------------------------------------ 被动回复
+
+        [Header("被动回复")]
+        [Tooltip("每秒自动回复多少蓝。0 = 关闭。\n\n" +
+                 "存在的意义是**兜底**：怪多的时候如果打空蓝又被围住，\n" +
+                 "没有这一个回复就会卡死（打不出子弹、怪也打不死你）。\n" +
+                 "它明显慢于射速，所以不影响「打得准才有盈余」这个经济。")]
+        [Min(0f)] public float regenPerSecond = 1.5f;
+
+        /// <summary>不足 1 点的回复量先攒着（蓝是整数，不能每帧 +0.02）。</summary>
+        private float m_RegenAccum;
+
+        private void Update()
+        {
+            if (regenPerSecond <= 0f) return;
+
+            // 只在地牢模式、真正进行中时回复（菜单 / 暂停 / 结算都不回）
+            if (!GameUI.IsDungeonMode) return;
+            if (GameUI.Current != GameState.Playing) return;
+
+            if (Current >= Max)
+            {
+                m_RegenAccum = 0f;
+                return;
+            }
+
+            m_RegenAccum += regenPerSecond * Time.deltaTime;
+
+            if (m_RegenAccum >= 1f)
+            {
+                int whole = Mathf.FloorToInt(m_RegenAccum);
+                m_RegenAccum -= whole;
+                Restore(whole);
+            }
+        }
+
         /// <summary>蓝够不够。</summary>
         public bool CanAfford(int cost) => Current >= Mathf.Max(0, cost);
 
@@ -79,7 +115,11 @@ namespace EchoPuzzle.Dungeon
         }
 
         /// <summary>回到开局蓝量（重开 / 换层用）。</summary>
-        public void ResetMana() => Set(Mathf.Clamp(startMana, 0, Max));
+        public void ResetMana()
+        {
+            m_RegenAccum = 0f;
+            Set(Mathf.Clamp(startMana, 0, Max));
+        }
 
         /// <summary>改上限（buff 用）。当前值会被夹到新上限内。</summary>
         public void SetMax(int newMax)
