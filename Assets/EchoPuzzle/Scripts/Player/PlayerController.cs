@@ -753,6 +753,18 @@ namespace EchoPuzzle
                 return;
             }
 
+            // ★ 地牢模式枪械瞄准时同样不转视角 —— 鼠标改为绕玩家旋转武器。
+            //
+            //   写法和上面两条完全一样：拿不到 Instance（探秘模式下永远是 null）
+            //   就整段跳过，所以探秘模式的镜头行为没有改变。
+            //   ★ 地牢模式的武器系统整体在 Scripts/Dungeon/ 下，不共用探秘的脚本。
+            var gun = Dungeon.DungeonWeapon.Instance;
+            if (gun != null && gun.IsAiming)
+            {
+                m_WasLooking = false;
+                return;
+            }
+
             float dx = Input.GetAxisRaw("Mouse X");
             float dy = Input.GetAxisRaw("Mouse Y");
 

@@ -5,26 +5,32 @@ namespace EchoPuzzle.Dungeon
     /// <summary>
     /// 【地牢模式】玩家的武器：瞄准 + 射击 + 蓝耗。
     ///
-    /// ── 操作 ────────────────────────────────────────────────
-    ///   · 按住右键（aimKey）进入瞄准：脚下出现圆环，正前方浮起一把武器
-    ///   · 瞄准时按住 / 单击左键（fireKey）发射，受 fireInterval 限制
+    /// ── 操作（照文档第 19 段）────────────────────────────────
+    ///   · 按住右键（aimKey）进入瞄准：脚下出现圆环，环上浮起一把武器
+    ///   · 瞄准时**鼠标不再转镜头**，而是绕玩家旋转武器（和匕首/投石同一套极坐标）
+    ///   · 按住 / 单击左键（fireKey）发射，受 fireInterval 限制
     ///     —— 单击再快也不会超过这个射速
     ///   · 松开右键退出瞄准
     ///
-    /// ── 瞄准方向 ────────────────────────────────────────────
-    ///   这一版用"相机准星"：屏幕中心射一条射线，打到哪就朝哪打。
-    ///   也就是说瞄准时鼠标仍然转视角（和探秘模式的投石/匕首不同 ——
-    ///   那两个是"按住右键拖动鼠标定角度"，更像投掷而不是射击）。
+    /// ── 瞄准数学（照抄 DaggerSystem.HandleAimMouse）──────────
+    ///   · 按下右键那一刻：记下相机方位角 m_AimBaseYaw，虚拟光标归零
+    ///   · 之后每帧：m_VirtualCursor += (Mouse X, Mouse Y) × 20
+    ///   · θ  = atan2(dy, dx)            （右=0°、上=90°、左=180°、下=270°）
+    ///   · 方位角 = m_AimBaseYaw + (90° - θ)
+    ///   · **只取 θ，无视半径 r** —— 和匕首完全一致（投石那边才用 r 当力度）
     ///
-    ///   ★ 想要文档里那种"鼠标不转镜头、只移动武器角度"的手感，
-    ///     只需要在 PlayerController.HandleLook 里加一个和
-    ///     StoneThrowSystem.IsAiming 同款的判断（约 3 行），
-    ///     本文件不用改 —— 见文末说明。
+    ///   ★ 因此武器始终在水平面上绕玩家转，俯仰恒为 0。
+    ///     这和匕首"永远在水平面上"是同一个设定；怪物受击圆柱高 4 米，
+    ///     水平弹道从枪口高度打过去依然能命中。
+    ///
+    /// ── 镜头冻结 ────────────────────────────────────────────
+    ///   需要 <see cref="PlayerController"/> 在 HandleLook 里放行，
+    ///   写法和它已有的 StoneThrowSystem / DaggerSystem 判断同款（3 行）。
     ///
     /// ── 和探秘模式的关系 ────────────────────────────────────
-    ///   ★ 只有 <see cref="DungeonWeaponBootstrap"/> 在地牢场景里会创建它。
-    ///     探秘模式的 <see cref="DaggerSystem"/> / <see cref="StoneThrowSystem"/>
-    ///     在地牢模式下本来就不创建，两边不会抢右键。
+    ///   ★ 只有 <see cref="DungeonWeaponBootstrap"/> 在地牢场景里会创建它；
+    ///     PlayerController 里那句判断靠 Instance 判空，探秘模式下永远为 null，
+    ///     所以对探秘模式零影响。
     /// </summary>
     [AddComponentMenu("Echo Puzzle/Dungeon/Dungeon Weapon")]
     [DefaultExecutionOrder(-50)]
@@ -35,11 +41,20 @@ namespace EchoPuzzle.Dungeon
         // ------------------------------------------------------------------ 输入
 
         [Header("输入")]
-        [Tooltip("按住进入瞄准")]
+        [Tooltip("按住进入瞄准（松开退出）")]
         public KeyCode aimKey = KeyCode.Mouse1;
 
         [Tooltip("瞄准时按住 / 单击都会发射")]
         public KeyCode fireKey = KeyCode.Mouse0;
+
+        // ------------------------------------------------------------------ 瞄准
+
+        [Header("瞄准")]
+        [Tooltip("鼠标位移换算成虚拟像素的比例。只影响「要拖多远才转到位」，不影响 1:1 跟随")]
+        [Min(1f)] public float virtualCursorPixelsPerUnit = 20f;
+
+        [Tooltip("鼠标位移小于多少虚拟像素时视为「还没离开原点」，武器保持朝正前方")]
+        [Min(0f)] public float dontMoveEps = 2f;
 
         // ------------------------------------------------------------------ 射击
 
@@ -92,11 +107,14 @@ namespace EchoPuzzle.Dungeon
         [Tooltip("圆环离地高度（米），抬高一点避免和地面 z-fighting")]
         public float ringGroundOffset = 0.03f;
 
-        [Tooltip("武器悬浮点离玩家脚底的高度（米）")]
+        [Tooltip("武器绕玩家旋转的半径（米）。建议略小于 ringRadius")]
+        [Min(0.1f)] public float weaponOrbitRadius = 0.9f;
+
+        [Tooltip("武器离地高度（米），也就是枪口高度")]
         public float weaponHeight = 1.15f;
 
-        [Tooltip("武器悬浮点离玩家的前向距离（米）")]
-        public float weaponDistance = 0.35f;
+        [Tooltip("枪口相对武器再往前伸出的距离（米）")]
+        public float muzzleForward = 0.28f;
 
         public Color weaponColor = new Color(1f, 1f, 1f, 0.9f);
 
@@ -105,6 +123,12 @@ namespace EchoPuzzle.Dungeon
         /// <summary>是否正在瞄准。</summary>
         public bool IsAiming { get; private set; }
 
+        /// <summary>当前瞄准的世界方位角（度）。0 = +Z，90 = +X。</summary>
+        public float AimYaw { get; private set; }
+
+        /// <summary>俯仰恒为 0（和匕首一致，武器只在水平面绕玩家转）。</summary>
+        public float AimPitch => 0f;
+
         /// <summary>最近一次成功发射的时间（Time.timeSinceLevelLoad）。</summary>
         public float LastFireTime { get; private set; } = -999f;
 
@@ -112,7 +136,6 @@ namespace EchoPuzzle.Dungeon
         public int ShotsFired { get; private set; }
 
         private PlayerController m_Player;
-        private Camera           m_Cam;
 
         private Transform m_RingRoot;
         private Transform m_WeaponRoot;
@@ -122,7 +145,16 @@ namespace EchoPuzzle.Dungeon
         private Material m_WeaponMat;
         private Material m_BulletMat;
 
-        private float m_NextFireTime;
+        private float   m_NextFireTime;
+
+        /// <summary>进入瞄准那一刻的相机方位角。</summary>
+        private float m_AimBaseYaw;
+
+        /// <summary>极坐标原点（虚拟光标按下的位置，通常是 0,0）。</summary>
+        private Vector2 m_AimOrigin;
+
+        /// <summary>按 Mouse X/Y 积分出来的虚拟光标位置。</summary>
+        private Vector2 m_VirtualCursor;
 
         // ------------------------------------------------------------------ 生命周期
 
@@ -164,23 +196,25 @@ namespace EchoPuzzle.Dungeon
 
         private void Update()
         {
-            // ★ 只在真正能操作的时候响应
-            if (!GameUI.IsDungeonMode) { SetAiming(false); return; }
+            if (!GameUI.IsDungeonMode) { LeaveAim(); return; }
 
             if (m_Player == null) m_Player = FindObjectOfType<PlayerController>();
-            if (m_Player == null) { SetAiming(false); return; }
+            if (m_Player == null) { LeaveAim(); return; }
 
             if (!GameUI.PlayerControllable || !GameUI.CameraInputActive)
             {
-                SetAiming(false);
+                LeaveAim();
                 return;
             }
 
             bool wantAim = Input.GetKey(aimKey);
-            SetAiming(wantAim);
+
+            if (wantAim && !IsAiming) EnterAim();
+            else if (!wantAim && IsAiming) LeaveAim();
 
             if (!IsAiming) return;
 
+            HandleAimMouse();
             UpdateAimTransform();
 
             // ★ 按住 / 单击都走同一个节流，所以手速不会影响射速
@@ -190,15 +224,35 @@ namespace EchoPuzzle.Dungeon
 
         // ------------------------------------------------------------------ 瞄准状态
 
-        private void SetAiming(bool on)
+        private void EnterAim()
         {
-            if (on == IsAiming) return;
+            IsAiming = true;
 
-            IsAiming = on;
-            SetAimVisuals(on);
+            // 基准方位 = 此刻相机的水平朝向；之后鼠标只在这个基准上加/减角度
+            m_AimBaseYaw = m_Player != null ? m_Player.Yaw : transform.eulerAngles.y;
 
-            // 退出瞄准时把节流清掉：下次进瞄准立刻能打
-            if (!on) m_NextFireTime = 0f;
+            m_AimOrigin     = Vector2.zero;
+            m_VirtualCursor = Vector2.zero;
+
+            AimYaw = m_AimBaseYaw;
+
+            SetAimVisuals(true);
+        }
+
+        private void LeaveAim()
+        {
+            if (!IsAiming)
+            {
+                SetAimVisuals(false);
+                return;
+            }
+
+            IsAiming = false;
+
+            // 退出时清节流：下次进瞄准立刻能打
+            m_NextFireTime = 0f;
+
+            SetAimVisuals(false);
         }
 
         private void SetAimVisuals(bool on)
@@ -207,73 +261,74 @@ namespace EchoPuzzle.Dungeon
             if (m_WeaponRoot != null) m_WeaponRoot.gameObject.SetActive(on);
         }
 
-        /// <summary>把圆环放到脚下、武器放到准星方向。</summary>
+        /// <summary>
+        /// 读取鼠标、更新 <see cref="AimYaw"/>。
+        /// 结构和 DaggerSystem.HandleAimMouse 一一对应：极坐标只取 θ，无视 r。
+        /// </summary>
+        private void HandleAimMouse()
+        {
+            float mx = Input.GetAxisRaw("Mouse X");
+            float my = Input.GetAxisRaw("Mouse Y");
+
+            m_VirtualCursor += new Vector2(mx, my) * Mathf.Max(1f, virtualCursorPixelsPerUnit);
+
+            Vector2 d = m_VirtualCursor - m_AimOrigin;
+
+            // 鼠标没离开原点：武器朝基准方向（进入瞄准时记下的相机前方）
+            float eps = Mathf.Max(0f, dontMoveEps);
+            if (d.sqrMagnitude < eps * eps)
+            {
+                AimYaw = m_AimBaseYaw;
+                return;
+            }
+
+            // 右 = 0°、上 = 90°、左 = 180°、下 = 270°
+            float thetaDeg = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
+
+            // θ=90° -> 基准正前方；θ=0° -> 基准右方；θ=180° -> 基准左方
+            AimYaw = Mathf.Repeat(m_AimBaseYaw + (90f - thetaDeg) + 180f, 360f) - 180f;
+        }
+
+        /// <summary>当前瞄准的水平单位方向。</summary>
+        public Vector3 AimDirection()
+        {
+            float rad = AimYaw * Mathf.Deg2Rad;
+            return new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+        }
+
+        /// <summary>把圆环放到脚下、武器摆到环上朝瞄准方向。</summary>
         private void UpdateAimTransform()
         {
             if (m_Player == null) return;
 
-            Vector3 aimDir = GetAimDirection();
+            Vector3 dir = AimDirection();
+            Vector3 feet = m_Player.transform.position;
 
-            // 圆环：玩家脚下（不跟着身体旋转，始终水平）
+            // 圆环：始终水平，位置跟着玩家
             if (m_RingRoot != null)
             {
-                m_RingRoot.position = m_Player.transform.position + Vector3.up * ringGroundOffset;
+                m_RingRoot.position = feet + Vector3.up * ringGroundOffset;
                 m_RingRoot.rotation = Quaternion.identity;
             }
 
-            // 武器：悬浮在玩家前方，指向瞄准方向
+            // 武器：在环上绕玩家转（和匕首一样，永远水平面）
             if (m_WeaponRoot != null)
             {
-                Vector3 pivot = m_Player.transform.position + Vector3.up * weaponHeight;
-                m_WeaponRoot.position = pivot + aimDir * weaponDistance;
-                m_WeaponRoot.rotation = Quaternion.LookRotation(aimDir, Vector3.up);
+                Vector3 pos = feet + Vector3.up * weaponHeight + dir * Mathf.Max(0.1f, weaponOrbitRadius);
+
+                m_WeaponRoot.position = pos;
+                m_WeaponRoot.rotation = Quaternion.LookRotation(dir, Vector3.up);
             }
         }
 
-        /// <summary>瞄准方向：屏幕中心射线的方向（相机准星）。</summary>
-        private Vector3 GetAimDirection()
-        {
-            Camera cam = GetCamera();
-
-            if (cam != null)
-            {
-                Ray r = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-
-                // 打到墙就用墙上的点，否则用射程尽头
-                Vector3 point = r.origin + r.direction * bulletRange;
-
-                if (Physics.Raycast(r, out RaycastHit hit, bulletRange,
-                                    ~((1 << 2) | (1 << 4) | (1 << 5)),
-                                    QueryTriggerInteraction.Ignore))
-                    point = hit.point;
-
-                Vector3 dir = point - MuzzlePosition(r.direction);
-                if (dir.sqrMagnitude > 1e-6f) return dir.normalized;
-            }
-
-            // 没相机就朝玩家正前方
-            Vector3 fwd = m_Player != null ? m_Player.transform.forward : Vector3.forward;
-            fwd.y = 0f;
-            return fwd.sqrMagnitude > 1e-6f ? fwd.normalized : Vector3.forward;
-        }
-
-        private Vector3 MuzzlePosition(Vector3 fallbackDir)
+        /// <summary>枪口位置：武器位置再往前伸一点，避免枪口埋在自己模型里。</summary>
+        private Vector3 MuzzlePosition(Vector3 dir)
         {
             if (m_Player == null) return transform.position;
 
-            Vector3 dir = fallbackDir.sqrMagnitude > 1e-6f ? fallbackDir.normalized : Vector3.forward;
-            return m_Player.transform.position + Vector3.up * weaponHeight + dir * (weaponDistance + 0.25f);
-        }
-
-        private Camera GetCamera()
-        {
-            if (m_Cam != null) return m_Cam;
-
-            m_Cam = m_Player != null && m_Player.playerCamera != null
-                  ? m_Player.playerCamera
-                  : Camera.main;
-
-            return m_Cam;
+            Vector3 feet = m_Player.transform.position;
+            return feet + Vector3.up * weaponHeight
+                        + dir * (Mathf.Max(0.1f, weaponOrbitRadius) + Mathf.Max(0f, muzzleForward));
         }
 
         // ------------------------------------------------------------------ 开火
@@ -283,14 +338,13 @@ namespace EchoPuzzle.Dungeon
             // 1) 蓝不够就不打，也不占用节流（免得没蓝时连按把节奏卡死）
             DungeonMana mana = DungeonMana.Instance;
             if (mana != null && !mana.CanAfford(manaCost)) return;
-
             if (mana != null && manaCost > 0 && !mana.TrySpend(manaCost)) return;
 
             // 2) 节流
             m_NextFireTime = Time.timeSinceLevelLoad + Mathf.Max(0.02f, fireInterval);
 
-            // 3) 出膛
-            Vector3 dir   = GetAimDirection();
+            // 3) 出膛：方向完全由 AimYaw 决定，和相机没关系
+            Vector3 dir    = AimDirection();
             Vector3 muzzle = MuzzlePosition(dir);
 
             DungeonBullet.Spawn(muzzle, dir,
@@ -323,13 +377,13 @@ namespace EchoPuzzle.Dungeon
 
             var mr = go.AddComponent<MeshRenderer>();
             if (m_RingMat != null) mr.sharedMaterial = m_RingMat;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mr.receiveShadows    = false;
-            mr.lightProbeUsage   = UnityEngine.Rendering.LightProbeUsage.Off;
-            mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+            mr.shadowCastingMode     = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows        = false;
+            mr.lightProbeUsage       = UnityEngine.Rendering.LightProbeUsage.Off;
+            mr.reflectionProbeUsage  = UnityEngine.Rendering.ReflectionProbeUsage.Off;
         }
 
-        /// <summary>悬浮武器：一个枪管 + 一个握把（两个 cube），够看出朝向就行。</summary>
+        /// <summary>悬浮武器：一个枪管 + 一个握把 + 一个准星，够看出朝向就行。</summary>
         private void BuildWeaponModel()
         {
             var root = new GameObject("DungeonWeaponModel");
@@ -337,7 +391,7 @@ namespace EchoPuzzle.Dungeon
             m_WeaponRoot = root.transform;
             m_WeaponRoot.SetParent(transform, false);
 
-            AddPart(m_WeaponRoot, "Barrel", new Vector3(0f, 0f, 0.20f), new Vector3(0.055f, 0.055f, 0.46f));
+            AddPart(m_WeaponRoot, "Barrel", new Vector3(0f, 0f, 0.20f),   new Vector3(0.055f, 0.055f, 0.46f));
             AddPart(m_WeaponRoot, "Grip",   new Vector3(0f, -0.10f, 0.02f), new Vector3(0.05f, 0.20f, 0.07f));
             AddPart(m_WeaponRoot, "Sight",  new Vector3(0f, 0.045f, 0.12f), new Vector3(0.02f, 0.02f, 0.02f));
         }
