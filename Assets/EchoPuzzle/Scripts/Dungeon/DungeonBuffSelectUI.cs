@@ -4,25 +4,27 @@ using UnityEngine;
 namespace EchoPuzzle.Dungeon
 {
     /// <summary>
-    /// 【地牢模式】每通关一层弹出的「三选一」强化的界面（最小模板）。
+    /// 【地牢模式】每通关一层弹出的「三选一」强化界面。
     ///
     /// ── 触发时机 ────────────────────────────────────────────
     ///   监听 <see cref="TriggerVolume.OnNextStage"/>（玩家走进下一层传送点），
     ///   等 <see cref="openDelay"/> 秒（让 DungeonMapGenerator 把新一层生成完、
     ///   淡入结束）再弹出。**不改齐放的地图代码**，只订阅它已有的静态事件。
     ///
+    /// ── 版式（3 列大卡片）──────────────────────────────────
+    ///   三张等宽卡片横排，几乎铺满整个画面：
+    ///     · 左右各留 sideMargin，卡片之间留 columnGap
+    ///     · 顶部留出标题和上下边距，其余高度全部给卡片
+    ///   卡片只有一层极淡的底色 + 细边框（悬停时底色会亮一点），
+    ///   文字纯白居中 —— 和 GameUI 那套"没有底框、只有文字"的风格一致。
+    ///
     /// ── 交互 ────────────────────────────────────────────────
     ///   · 打开时 Time.timeScale = 0（世界冻结）、光标解锁
     ///   · 点卡片，或按 1 / 2 / 3 选一项
     ///   · 选完立刻恢复 timeScale、锁定光标
     ///
-    /// ── 版式 ────────────────────────────────────────────────
-    ///   和 GameUI / DungeonHUD 完全同一套：IMGUI + 按 1080 高度等比缩放。
-    ///   全黑背景、纯白文字、没有底框和图标。
-    ///
     /// ── 和探秘模式的关系 ────────────────────────────────────
-    ///   ★ 只在 <see cref="GameUI.IsDungeonMode"/> 时工作；
-    ///     探秘模式的 TriggerVolume 触发 NextStage 时这里直接返回。
+    ///   ★ 只在 <see cref="GameUI.IsDungeonMode"/> 时工作。
     /// </summary>
     [AddComponentMenu("Echo Puzzle/Dungeon/Dungeon Buff Select UI")]
     public sealed class DungeonBuffSelectUI : MonoBehaviour
@@ -41,26 +43,44 @@ namespace EchoPuzzle.Dungeon
         // ------------------------------------------------------------------ 版式
 
         [Header("版式（1080 高度基准的像素）")]
-        public float titleSize  = 34f;
-        public float optionSize = 24f;
-        public float descSize   = 18f;
+        [Tooltip("左右边距")]
+        public float sideMargin = 72f;
 
-        [Tooltip("卡片宽度")]
-        public float cardWidth = 620f;
+        [Tooltip("卡片之间的间距")]
+        public float columnGap = 28f;
 
-        [Tooltip("卡片高度")]
-        public float cardHeight = 96f;
+        [Tooltip("卡片顶部起始位置（标题下面）")]
+        public float cardsTop = 196f;
 
-        [Tooltip("卡片之间的竖直间距")]
-        public float cardSpacing = 18f;
+        [Tooltip("卡片底部距屏幕底边的距离（留给底部提示）")]
+        public float cardsBottom = 132f;
 
-        [Tooltip("标题距屏幕顶部的距离")]
-        public float titleTop = 200f;
+        [Tooltip("标题距顶部的距离")]
+        public float titleTop = 96f;
 
-        [Header("颜色")]
+        [Header("字号")]
+        public float titleSize  = 40f;
+        public float nameSize   = 36f;
+        public float descSize   = 21f;
+        public float footerSize = 19f;
+
+        [Header("卡片外观")]
+        [Tooltip("卡片底色（很淡，只用来划分三列）")]
+        public Color cardColor = new Color(1f, 1f, 1f, 0.045f);
+
+        [Tooltip("鼠标悬停时的底色")]
+        public Color cardHoverColor = new Color(1f, 1f, 1f, 0.13f);
+
+        [Tooltip("边框颜色")]
+        public Color cardBorderColor = new Color(1f, 1f, 1f, 0.22f);
+
+        [Tooltip("边框粗细")]
+        [Min(1f)] public float borderThickness = 2f;
+
+        [Header("文字颜色")]
         public Color textColor     = Color.white;
         public Color dimColor      = new Color(1f, 1f, 1f, 0.55f);
-        public Color backdropColor = new Color(0f, 0f, 0f, 0.78f);
+        public Color backdropColor = new Color(0f, 0f, 0f, 0.82f);
 
         private const float RefHeight = 1080f;
 
@@ -75,11 +95,16 @@ namespace EchoPuzzle.Dungeon
         private float m_PendingTimer = -1f;
 
         private float     m_PrevTimeScale = 1f;
+
         private Texture2D m_Pixel;
+        private Texture2D m_CardTex;
+        private Texture2D m_CardHoverTex;
 
         private GUIStyle m_TitleStyle;
-        private GUIStyle m_OptionStyle;
+        private GUIStyle m_NameStyle;
         private GUIStyle m_DescStyle;
+        private GUIStyle m_IndexStyle;
+        private GUIStyle m_FooterStyle;
         private GUIStyle m_ClickArea;
 
         // ------------------------------------------------------------------ 生命周期
@@ -93,7 +118,10 @@ namespace EchoPuzzle.Dungeon
             }
 
             Instance = this;
-            m_Pixel  = MakePixel();
+
+            m_Pixel        = MakeSolid(Color.white);
+            m_CardTex      = MakeSolid(cardColor);
+            m_CardHoverTex = MakeSolid(cardHoverColor);
         }
 
         private void OnEnable()  => TriggerVolume.OnNextStage += OnNextStage;
@@ -102,7 +130,15 @@ namespace EchoPuzzle.Dungeon
         private void OnDestroy()
         {
             if (Instance == this) Instance = null;
-            if (m_Pixel != null) Destroy(m_Pixel);
+
+            DestroyTex(m_Pixel);
+            DestroyTex(m_CardTex);
+            DestroyTex(m_CardHoverTex);
+        }
+
+        private static void DestroyTex(Texture2D t)
+        {
+            if (t != null) Destroy(t);
         }
 
         // ------------------------------------------------------------------ 触发
@@ -171,7 +207,7 @@ namespace EchoPuzzle.Dungeon
             Cursor.visible   = true;
         }
 
-        /// <param name="restoreCursor">是否把光标锁回去（重开 / 换场景时不需要）</param>
+        /// <param name="restoreCursor">是否把光标锁回去（换场景 / 退出时不需要）</param>
         private void Close(bool restoreCursor = true)
         {
             if (!IsOpen) return;
@@ -199,7 +235,7 @@ namespace EchoPuzzle.Dungeon
             if (DungeonBuffState.Instance != null)
                 DungeonBuffState.Instance.Add(def);
 
-            Debug.Log($"[地牢] 获得强化：{def.name}（{def.desc}）");
+            Debug.Log($"[地牢] 获得强化：{def.name}（{def.desc.Replace("\n", " ")}）");
 
             Close();
         }
@@ -219,41 +255,90 @@ namespace EchoPuzzle.Dungeon
 
             float w = Screen.width / scale;
 
-            // 全屏黑底
+            // 全屏黑底（多画高一点，防高分屏下有缝）
             Color prev = GUI.color;
             GUI.color = backdropColor;
             GUI.DrawTexture(new Rect(0f, 0f, w, RefHeight * 1.5f), m_Pixel);
             GUI.color = prev;
 
             // 标题
-            GUI.Label(new Rect(0f, titleTop, w, 60f), "选择一项强化", m_TitleStyle);
+            GUI.Label(new Rect(0f, titleTop, w, 64f), "选择一项强化", m_TitleStyle);
 
-            // 卡片
-            float x = (w - cardWidth) * 0.5f;
-            float y = titleTop + 96f;
+            // ---- 三列等宽卡片 ----
+            int   n       = m_Options.Count;
+            float usable  = w - sideMargin * 2f - columnGap * (n - 1);
+            float cardW   = usable / Mathf.Max(1, n);
+            float cardH   = RefHeight - cardsTop - cardsBottom;
+            float cardY   = cardsTop;
 
-            for (int i = 0; i < m_Options.Count; i++)
+            for (int i = 0; i < n; i++)
             {
                 DungeonBuffDef d = m_Options[i];
 
-                var card = new Rect(x, y, cardWidth, cardHeight);
+                float cardX = sideMargin + i * (cardW + columnGap);
+                var   card  = new Rect(cardX, cardY, cardW, cardH);
 
-                GUI.Label(new Rect(card.x + 24f, card.y + 10f, card.width - 48f, 34f),
-                          $"{i + 1}. {d.name}", m_OptionStyle);
+                // 1) 整张卡片就是点击区（背景 + 悬停高亮都由这个样式画）
+                bool clicked = GUI.Button(card, GUIContent.none, m_ClickArea);
 
-                GUI.Label(new Rect(card.x + 24f, card.y + 50f, card.width - 48f, 30f),
+                // 2) 细边框
+                DrawBorder(card);
+
+                // 3) 文字（画在按钮之上）
+                float pad = Mathf.Max(16f, cardW * 0.07f);
+
+                //    左上角的编号，提示"按数字键也能选"
+                GUI.Label(new Rect(cardX + pad, cardY + 20f, 60f, 40f), (i + 1).ToString(), m_IndexStyle);
+
+                //    名称（居中，卡片上部）
+                GUI.Label(new Rect(cardX + pad, cardY + cardH * 0.22f, cardW - pad * 2f, 58f),
+                          d.name, m_NameStyle);
+
+                //    名称下面一条分隔线
+                Color pc = GUI.color;
+                GUI.color = cardBorderColor;
+                GUI.DrawTexture(new Rect(cardX + pad, cardY + cardH * 0.22f + 66f, cardW - pad * 2f, 1f), m_Pixel);
+                GUI.color = pc;
+
+                //    描述（自动换行）
+                GUI.Label(new Rect(cardX + pad, cardY + cardH * 0.22f + 92f, cardW - pad * 2f, cardH * 0.36f),
                           d.desc, m_DescStyle);
 
-                // 整张卡片都是点击区（样式透明，所以只画出上面的文字）
-                if (GUI.Button(card, GUIContent.none, m_ClickArea)) Pick(i);
+                //    已拥有层数（卡片底部）
+                int stacks = DungeonBuffState.Instance != null
+                           ? DungeonBuffState.Instance.StacksOf(d)
+                           : 0;
 
-                y += cardHeight + cardSpacing;
+                string stackText = stacks > 0 ? $"已拥有 ×{stacks}（上限 ×{d.maxStacks}）"
+                                              : $"还未拥有（上限 ×{d.maxStacks}）";
+
+                GUI.Label(new Rect(cardX + pad, cardY + cardH - 72f, cardW - pad * 2f, 40f),
+                          stackText, m_FooterStyle);
+
+                if (clicked) Pick(i);
             }
 
             // 底部提示
-            GUI.Label(new Rect(0f, y + 16f, w, 30f), "点击卡片，或按 1 / 2 / 3", m_DescStyle);
+            GUI.Label(new Rect(0f, RefHeight - cardsBottom + 44f, w, 40f),
+                      "点击卡片，或按 1 / 2 / 3", m_FooterStyle);
 
             GUI.matrix = saved;
+        }
+
+        /// <summary>画一圈细边框（四条 1×1 拉伸的矩形）。</summary>
+        private void DrawBorder(Rect r)
+        {
+            Color prev = GUI.color;
+            GUI.color = cardBorderColor;
+
+            float t = Mathf.Max(1f, borderThickness);
+
+            GUI.DrawTexture(new Rect(r.x,           r.y,            r.width, t),          m_Pixel); // 上
+            GUI.DrawTexture(new Rect(r.x,           r.yMax - t,     r.width, t),          m_Pixel); // 下
+            GUI.DrawTexture(new Rect(r.x,           r.y,            t,       r.height),   m_Pixel); // 左
+            GUI.DrawTexture(new Rect(r.xMax - t,    r.y,            t,       r.height),   m_Pixel); // 右
+
+            GUI.color = prev;
         }
 
         private void EnsureStyles()
@@ -272,42 +357,68 @@ namespace EchoPuzzle.Dungeon
             };
             m_TitleStyle.normal.textColor = textColor;
 
-            m_OptionStyle = new GUIStyle(GUI.skin.label)
+            m_NameStyle = new GUIStyle(GUI.skin.label)
             {
                 font      = f,
-                fontSize  = Mathf.RoundToInt(optionSize),
-                alignment = TextAnchor.MiddleLeft,
+                fontSize  = Mathf.RoundToInt(nameSize),
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
             };
-            m_OptionStyle.normal.textColor = textColor;
+            m_NameStyle.normal.textColor = textColor;
 
             m_DescStyle = new GUIStyle(GUI.skin.label)
             {
                 font      = f,
                 fontSize  = Mathf.RoundToInt(descSize),
-                alignment = TextAnchor.MiddleCenter,
+                alignment = TextAnchor.UpperCenter,
+                wordWrap  = true,
+                richText  = false,
             };
-            m_DescStyle.normal.textColor = dimColor;
+            m_DescStyle.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
 
-            // 透明点击区：所有状态都去掉底图，只用来收点击
-            m_ClickArea = new GUIStyle(GUI.skin.button);
-            m_ClickArea.normal.background   = null;
-            m_ClickArea.hover.background    = null;
-            m_ClickArea.active.background   = null;
-            m_ClickArea.focused.background  = null;
-            m_ClickArea.onNormal.background = null;
-            m_ClickArea.onHover.background  = null;
-            m_ClickArea.onActive.background = null;
+            m_IndexStyle = new GUIStyle(GUI.skin.label)
+            {
+                font      = f,
+                fontSize  = Mathf.RoundToInt(footerSize),
+                alignment = TextAnchor.UpperLeft,
+            };
+            m_IndexStyle.normal.textColor = dimColor;
+
+            m_FooterStyle = new GUIStyle(GUI.skin.label)
+            {
+                font      = f,
+                fontSize  = Mathf.RoundToInt(footerSize),
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap  = true,
+            };
+            m_FooterStyle.normal.textColor = dimColor;
+
+            // 卡片点击区：只负责底色和悬停，不画字
+            m_ClickArea = new GUIStyle(GUI.skin.button)
+            {
+                border  = new RectOffset(0, 0, 0, 0),
+                margin  = new RectOffset(0, 0, 0, 0),
+                padding = new RectOffset(0, 0, 0, 0),
+            };
+
+            m_ClickArea.normal.background   = m_CardTex;
+            m_ClickArea.hover.background    = m_CardHoverTex;
+            m_ClickArea.active.background   = m_CardHoverTex;
+            m_ClickArea.focused.background  = m_CardTex;
+            m_ClickArea.onNormal.background = m_CardTex;
+            m_ClickArea.onHover.background  = m_CardHoverTex;
+            m_ClickArea.onActive.background = m_CardHoverTex;
         }
 
-        /// <summary>1×1 白色纹理（用 GUI.color 染色），和其他 HUD 一样不依赖贴图资源。</summary>
-        private static Texture2D MakePixel()
+        /// <summary>生成一张 1×1 纯色纹理（带 alpha），不依赖任何贴图资源。</summary>
+        private static Texture2D MakeSolid(Color c)
         {
             var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false)
             {
                 hideFlags = HideFlags.HideAndDontSave
             };
 
-            tex.SetPixel(0, 0, Color.white);
+            tex.SetPixel(0, 0, c);
             tex.Apply();
             return tex;
         }

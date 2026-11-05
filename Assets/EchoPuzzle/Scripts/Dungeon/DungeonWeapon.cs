@@ -159,6 +159,45 @@ namespace EchoPuzzle.Dungeon
         /// <summary>累计发射数（调试 / buff 统计用）。</summary>
         public int ShotsFired { get; private set; }
 
+        // ------------------------------------------------------------------ 当前有效数值（含 buff）
+
+        // ★ 这里是「基础值 × buff 乘区」的唯一出处：
+        //   开火、HUD 显示、以后做数值面板都读这几个属性，
+        //   避免同一套公式在三个地方各写一遍然后慢慢写歪。
+
+        private static float Mul(System.Func<DungeonBuffState, float> pick)
+        {
+            DungeonBuffState b = DungeonBuffState.Instance;
+            return b != null ? pick(b) : 1f;
+        }
+
+        /// <summary>含 buff 后的单发蓝耗。</summary>
+        public int EffectiveManaCost
+            => Mathf.Max(0, Mathf.RoundToInt(manaCost * Mul(s => s.ManaCostMul)));
+
+        /// <summary>含 buff 后的单发伤害。</summary>
+        public int EffectiveDamage
+            => Mathf.Max(1, Mathf.RoundToInt(damage * Mul(s => s.DamageMul)));
+
+        /// <summary>含 buff 后的击杀回蓝。</summary>
+        public int EffectiveKillMana
+            => Mathf.Max(0, Mathf.RoundToInt(killManaRestore * Mul(s => s.KillManaMul)));
+
+        /// <summary>含 buff 后的射击间隔（秒）。</summary>
+        public float EffectiveFireInterval
+            => Mathf.Max(0.02f, fireInterval / Mathf.Max(0.1f, Mul(s => s.FireRateMul)));
+
+        /// <summary>含 buff 后的每秒射速（发/秒），给 HUD 显示用。</summary>
+        public float EffectiveShotsPerSecond => 1f / Mathf.Max(0.02f, EffectiveFireInterval);
+
+        /// <summary>含 buff 后的子弹速度。</summary>
+        public float EffectiveBulletSpeed
+            => bulletSpeed * Mul(s => s.BulletSpeedMul);
+
+        /// <summary>含 buff 后的拖尾宽度。</summary>
+        public float EffectiveBulletWidth
+            => bulletWidth * Mul(s => s.BulletWidthMul);
+
         private PlayerController m_Player;
 
         private Transform m_RingRoot;
@@ -401,22 +440,10 @@ namespace EchoPuzzle.Dungeon
 
         private void Fire()
         {
-            // ── 0) 先把 buff 的乘区取出来（没拿过 buff 全是 1）──
-            DungeonBuffState buffs = DungeonBuffState.Instance;
-
-            float dmgMul   = buffs != null ? buffs.DamageMul      : 1f;
-            float rateMul  = buffs != null ? buffs.FireRateMul    : 1f;
-            float manaMul  = buffs != null ? buffs.ManaCostMul    : 1f;
-            float killMul  = buffs != null ? buffs.KillManaMul    : 1f;
-            float speedMul = buffs != null ? buffs.BulletSpeedMul : 1f;
-            float widthMul = buffs != null ? buffs.BulletWidthMul : 1f;
-
-            int   cost     = Mathf.Max(0, Mathf.RoundToInt(manaCost * manaMul));
-            int   dmg      = Mathf.Max(1, Mathf.RoundToInt(damage * dmgMul));
-            int   killBack = Mathf.Max(0, Mathf.RoundToInt(killManaRestore * killMul));
-
-            // 射速：fireRateMul 是倍率，间隔要反过来除
-            float interval = Mathf.Max(0.02f, fireInterval / Mathf.Max(0.1f, rateMul));
+            // ── 0) 取含 buff 的有效数值（唯一出处见上面的 Effective* 属性）──
+            int   cost     = EffectiveManaCost;
+            int   dmg      = EffectiveDamage;
+            int   killBack = EffectiveKillMana;
 
             // 1) 蓝不够就不打，也不占用节流（免得没蓝时连按把节奏卡死）
             DungeonMana mana = DungeonMana.Instance;
@@ -424,15 +451,15 @@ namespace EchoPuzzle.Dungeon
             if (mana != null && cost > 0 && !mana.TrySpend(cost)) return;
 
             // 2) 节流
-            m_NextFireTime = Time.timeSinceLevelLoad + interval;
+            m_NextFireTime = Time.timeSinceLevelLoad + EffectiveFireInterval;
 
             // 3) 出膛：方向完全由 AimYaw 决定，和相机没关系
             Vector3 dir    = AimDirection();
             Vector3 muzzle = MuzzlePosition(dir);
 
             DungeonBullet.Spawn(muzzle, dir,
-                                bulletSpeed * speedMul, bulletRange,
-                                bulletWidth * widthMul, bulletFadeTime,
+                                EffectiveBulletSpeed, bulletRange,
+                                EffectiveBulletWidth, bulletFadeTime,
                                 dmg, killBack,
                                 monsterHurtRadius, monsterHurtHeight,
                                 m_BulletMat);

@@ -66,19 +66,23 @@ namespace EchoPuzzle.Dungeon
     /// <summary>
     /// 【地牢模式】buff 池 + 抽卡。
     ///
-    /// 现在放的是 8 条"足够验证框架"的 buff，效果都不重样，且能互相叠加。
-    /// 加新 buff 只要往 <see cref="All"/> 里加一行。
+    /// ★ 现在**只放三条**，是刻意的：
+    ///   一次三选一正好把三条都发出去，能完整验证「池子 → 抽卡 → 三列卡片 → 生效」
+    ///   这条链路。效果类型也刻意选成三种不同量纲（伤害 / 射速 / 蓝耗），
+    ///   方便一眼看出哪条生效了。
+    ///
+    ///   加新 buff：往 <see cref="All"/> 里加一行即可，字段见 <see cref="DungeonBuffDef"/>。
+    ///   之前做过的 8 条在 git 历史里（commit 56af1b1），
+    ///   需要时把对应几行粘回来，并把抽卡逻辑原样保留。
     /// </summary>
     public static class DungeonBuffPool
     {
         public static readonly List<DungeonBuffDef> All = new List<DungeonBuffDef>
         {
-            // ---------------- 进攻类 ----------------
-
             new DungeonBuffDef
             {
                 id = "dmg", name = "高爆弹头",
-                desc = "伤害 +50%",
+                desc = "子弹伤害 +50%。\n每层可叠一次，越叠越疼。",
                 weight = 10f, maxStacks = 5,
                 damageMul = 1.5f,
             },
@@ -86,63 +90,17 @@ namespace EchoPuzzle.Dungeon
             new DungeonBuffDef
             {
                 id = "rate", name = "快扳机",
-                desc = "射速 +25%",
+                desc = "射速 +25%。\n同样时间能多打四分之一。",
                 weight = 10f, maxStacks = 5,
                 fireRateMul = 1.25f,
             },
 
             new DungeonBuffDef
             {
-                id = "heavy", name = "重弹",
-                desc = "伤害 +90%，但蓝耗 ×1.6",
-                weight = 6f, maxStacks = 3,
-                damageMul = 1.9f,
-                manaCostMul = 1.6f,
-            },
-
-            // ---------------- 资源类 ----------------
-
-            new DungeonBuffDef
-            {
                 id = "eco", name = "省电模式",
-                desc = "蓝耗 -30%",
+                desc = "蓝耗 -30%。\n打得越久，省得越多。",
                 weight = 10f, maxStacks = 3,
                 manaCostMul = 0.7f,
-            },
-
-            new DungeonBuffDef
-            {
-                id = "recycle", name = "回收装置",
-                desc = "击杀回蓝 +60%",
-                weight = 9f, maxStacks = 4,
-                killManaMul = 1.6f,
-            },
-
-            new DungeonBuffDef
-            {
-                id = "battery", name = "扩容电池",
-                desc = "蓝上限 +50（并立即补满这些蓝）",
-                weight = 8f, maxStacks = 4,
-                maxManaAdd = 50,
-            },
-
-            // ---------------- 手感 / 视觉 ----------------
-
-            new DungeonBuffDef
-            {
-                id = "velocity", name = "高初速",
-                desc = "子弹速度 +50%（更好打移动目标）",
-                weight = 8f, maxStacks = 3,
-                bulletSpeedMul = 1.5f,
-            },
-
-            new DungeonBuffDef
-            {
-                id = "beam", name = "粗光束",
-                desc = "拖尾 +80%，蓝耗 -10%",
-                weight = 7f, maxStacks = 2,
-                bulletWidthMul = 1.8f,
-                manaCostMul = 0.9f,
             },
         };
 

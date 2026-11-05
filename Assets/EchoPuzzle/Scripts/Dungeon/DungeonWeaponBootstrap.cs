@@ -52,11 +52,12 @@ namespace EchoPuzzle.Dungeon
             root.AddComponent<DungeonWeapon>();
             root.AddComponent<DungeonManaHUD>();
 
-            // 强化系统（buff）：状态 + 每层通关的三选一界面
+            // 强化系统（buff）：状态 + 每层通关的三选一界面 + 左上角的已获得列表
             root.AddComponent<DungeonBuffState>();
             root.AddComponent<DungeonBuffSelectUI>();
+            root.AddComponent<DungeonBuffHUD>();
 
-            Debug.Log("[地牢] 已自动装配武器系统（DungeonMana / DungeonWeapon / DungeonManaHUD / DungeonBuffState / DungeonBuffSelectUI）。");
+            Debug.Log("[地牢] 已自动装配武器系统（DungeonMana / DungeonWeapon / DungeonManaHUD / DungeonBuffState / DungeonBuffSelectUI / DungeonBuffHUD）。");
         }
     }
 }
