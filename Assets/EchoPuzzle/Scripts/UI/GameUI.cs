@@ -819,7 +819,7 @@ namespace EchoPuzzle
             //   松开时由各自的系统自己锁回，这里在瞄准时直接让路即可。
             bool aiming = AnySystemAiming();
 
-            if (s_State == GameState.Playing && !aiming)
+            if (s_State == GameState.Playing && !aiming && !DungeonUiWantsCursor)
             {
                 if (Cursor.lockState != CursorLockMode.Locked)
                 {
@@ -861,7 +861,8 @@ namespace EchoPuzzle
             //   它们需要 Input.mousePosition 读极坐标，
             //   这里每帧强制锁定的话会把它们的解锁覆盖掉。
             bool aiming     = AnySystemAiming();
-            bool wantLocked = (s_State == GameState.Playing || m_EndFadeActive) && !aiming;
+            bool wantLocked = (s_State == GameState.Playing || m_EndFadeActive)
+                              && !aiming && !DungeonUiWantsCursor;
 
             if (wantLocked)
             {
@@ -1300,6 +1301,28 @@ namespace EchoPuzzle
             // 这时必须让路，否则这里每帧锁回去，指针一闪就没了。
             var d = DaggerSystem.Instance;
             return d != null && d.IsAiming && d.showCursorForDebug;
+        }
+
+        /// <summary>
+        /// 【地牢模式】是否有一个"要用鼠标指针点"的地牢界面正在显示（强化三选一）。
+        ///
+        /// ★ 用途和 <see cref="AnySystemAiming"/> 一样：为 true 时下面两处
+        ///   **不要锁光标**。
+        ///
+        ///   之前缺这个判断，表现是「三选一卡片点不了」：
+        ///   DungeonBuffSelectUI 打开时把光标解锁了，但 LateUpdate /
+        ///   EnforceWorldVisibility 每帧又按回 Locked ——
+        ///   指针消失、鼠标实际位置钉在屏幕中心，点哪都没反应。
+        ///
+        ///   探秘模式下这个 Instance 永远是 null，返回 false，行为不变。
+        /// </summary>
+        private static bool DungeonUiWantsCursor
+        {
+            get
+            {
+                var ui = Dungeon.DungeonBuffSelectUI.Instance;
+                return ui != null && ui.IsOpen;
+            }
         }
 
         private static void LockCursor()

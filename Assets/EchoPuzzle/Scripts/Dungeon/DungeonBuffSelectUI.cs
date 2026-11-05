@@ -173,6 +173,14 @@ namespace EchoPuzzle.Dungeon
 
             if (!IsOpen) return;
 
+            // ★ 兜底：别的系统（GameUI.LateUpdate / 切窗口）可能把光标又锁回去，
+            //   这里每帧重申一次 —— 指针不在，卡片就点不动。
+            if (Cursor.lockState != CursorLockMode.None || !Cursor.visible)
+            {
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible   = true;
+            }
+
             // ---- 数字键快速选择 ----
             if (Input.GetKeyDown(KeyCode.Alpha1)) Pick(0);
             if (Input.GetKeyDown(KeyCode.Alpha2)) Pick(1);

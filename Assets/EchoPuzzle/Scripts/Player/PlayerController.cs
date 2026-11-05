@@ -556,7 +556,12 @@ namespace EchoPuzzle
             // 只有投石需要解锁光标；匕首用虚拟光标，光标保持锁定。
             bool aiming = stones != null && stones.IsAiming;
 
-            if (hasFocus && lockCursorOnStart && GameUI.CameraInputActive && !aiming)
+            // ★ 地牢模式的强化三选一界面要用真实指针点卡片，
+            //   切窗口回来时不能把它锁回去（否则点哪都没反应）。
+            bool buffUiOpen = Dungeon.DungeonBuffSelectUI.Instance != null
+                           && Dungeon.DungeonBuffSelectUI.Instance.IsOpen;
+
+            if (hasFocus && lockCursorOnStart && GameUI.CameraInputActive && !aiming && !buffUiOpen)
             {
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible   = false;
