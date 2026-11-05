@@ -25,6 +25,16 @@ namespace EchoPuzzle.Dungeon
         /// <summary>和声波一致的"墙"层掩码：排除 Ignore Raycast(2) / Water(4) / UI(5)。</summary>
         private static readonly LayerMask WallMask = ~((1 << 2) | (1 << 4) | (1 << 5));
 
+        /// <summary>
+        /// 调试开关：把每发子弹的结局打到 Console（撞墙 / 命中 / 飞完全程）。
+        ///
+        /// 出现"明明对着怪打却不掉血"时，把它置 true 跑一次：
+        ///   · 日志是「撞墙」  -> 枪口位置或掩体问题（看距离和物体名）
+        ///   · 日志是「飞完全程」-> 方向偏了（比对 aim guide 的指向）
+        ///   · 完全没有日志    -> 子弹没生成（蓝不够 / 不在 Playing 状态）
+        /// </summary>
+        public static bool DebugLog;
+
         // 怪物列表每帧全场景扫太贵，0.5 秒刷新一次就够（怪物移动没那么快）
         private static PuzzleMonster[] s_Monsters;
         private static float           s_MonstersNextRefresh;
@@ -137,30 +147,50 @@ namespace EchoPuzzle.Dungeon
 
             float segLen = (b - a).magnitude;
 
-            // ---- 1) 先查怪物：贴脸时墙的判定可能先吃掉，所以怪物优先 ----
-            if (TryHitMonster(a, b, out float hitT))
+            // ---- 1) 先量墙：墙是硬阻挡，怪物不能在墙后面被打到 ----
+            bool  wallHit  = false;
+            float wallDist = float.MaxValue;
+            RaycastHit wallInfo = default;
+
+            if (segLen > 1e-5f &&
+                Physics.SphereCast(a, m_Width * 0.5f, (b - a) / segLen,
+                                   out wallInfo, segLen,
+                                   WallMask, QueryTriggerInteraction.Ignore))
             {
-                StopAt(Mathf.Lerp(m_Travel, next, hitT));
-                return;
+                wallHit  = true;
+                wallDist = Mathf.Max(0f, wallInfo.distance);
             }
 
-            // ---- 2) 再查墙 ----
-            if (segLen > 1e-5f)
+            // ---- 2) 再看怪物：只有「比墙更近」的那只才算命中 ----
+            if (TryHitMonster(a, b, out float hitT))
             {
-                if (Physics.SphereCast(a, m_Width * 0.5f, (b - a) / segLen,
-                                       out RaycastHit hit, segLen,
-                                       WallMask, QueryTriggerInteraction.Ignore))
+                float monDist = segLen * hitT;
+
+                if (!wallHit || monDist <= wallDist)
                 {
-                    StopAt(m_Travel + Mathf.Max(0f, hit.distance));
+                    StopAt(m_Travel + monDist);
+                    if (DebugLog) Debug.Log($"[子弹] 命中怪物（{m_Travel + monDist:F1} m 处）。");
                     return;
                 }
+            }
+
+            // ---- 3) 撞墙 ----
+            if (wallHit)
+            {
+                StopAt(m_Travel + wallDist);
+                if (DebugLog) Debug.Log($"[子弹] 撞墙（{m_Travel + wallDist:F1} m 处，物体「{wallInfo.collider.name}」）。");
+                return;
             }
 
             m_Travel = next;
             m_Line.SetPosition(1, b);
 
             // 打空到射程尽头：停住、开始淡出
-            if (m_Travel >= m_Range - 1e-4f) StopAt(m_Range);
+            if (m_Travel >= m_Range - 1e-4f)
+            {
+                StopAt(m_Range);
+                if (DebugLog) Debug.Log("[子弹] 飞完全程，没打到任何东西。");
+            }
         }
 
         /// <summary>波前停在这里，之后只淡出。</summary>

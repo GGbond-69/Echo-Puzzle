@@ -1360,6 +1360,11 @@ namespace EchoPuzzle
             else if (m_Player != null)
                 m_Player.Teleport(m_StartPosition, m_StartYaw, startPitch);
 
+            // ★ 地牢模式：每次「新游戏」都把蓝量刷回开局值。
+            //   否则从暂停界面「返回主页」再点「新游戏」，蓝条会带着上一局的残值。
+            //   探秘模式下 Instance 为 null，这行不产生任何影响。
+            if (Dungeon.DungeonMana.Instance != null) Dungeon.DungeonMana.Instance.ResetMana();
+
             EnterPlaying();
         }
 
@@ -1496,6 +1501,16 @@ namespace EchoPuzzle
 
             // 石头回到开局数量
             if (StoneSystem.Instance != null) StoneSystem.Instance.ResetToStart();
+
+            // ★ 地牢模式的蓝量也要回到开局值。
+            //
+            //   探秘模式下 DungeonMana.Instance 永远是 null（那个组件只在
+            //   DungeonMode 场景里由 DungeonWeaponBootstrap 创建），所以这行
+            //   对探秘模式没有任何影响。
+            //
+            //   之前漏了这一步：重开一局后蓝条停在上一局剩下的数值，
+            //   只有重启整个播放进程（Instance 重建）才会回到满蓝。
+            if (Dungeon.DungeonMana.Instance != null) Dungeon.DungeonMana.Instance.ResetMana();
 
             // 音乐停止并复位（否则上一局的音乐会在新一局继续播）
             TriggerMusic.ResetAllMusic();

@@ -62,14 +62,25 @@ namespace EchoPuzzle.Dungeon
         [Tooltip("两发之间的最小间隔（秒）。按住和连点都受它限制")]
         [Min(0.02f)] public float fireInterval = 0.18f;
 
+        // ── 蓝量经济（这三个数要一起看，单独调一个会失衡）──────────
+        //
+        //   怪物 12 血。一组默认值的账：
+        //     3 发打死（damage 4）  -> 花 3 × 4 = 12 蓝
+        //     击杀回 20 蓝          -> 一只怪净赚 +8
+        //   也就是说：**打得准**才有盈余，打空两发就基本白打。
+        //   一次怪物潮 5 只怪 -> 净 +40 蓝，够再打 10 发。
+        //
+        //   ★ 之前 damage=1 / 蓝耗 5 / 回 15 是错的：
+        //     杀一只要 12 发 = 60 蓝，只回 15，每杀一只净亏 45，两波就空蓝。
+
         [Tooltip("单发蓝耗")]
-        [Min(0)] public int manaCost = 5;
+        [Min(0)] public int manaCost = 4;
 
         [Tooltip("单发伤害。怪物血量见 PuzzleMonster.dungeonMaxHealth（默认 12）")]
-        [Min(1)] public int damage = 1;
+        [Min(1)] public int damage = 4;
 
-        [Tooltip("打死一只怪回复的蓝")]
-        [Min(0)] public int killManaRestore = 15;
+        [Tooltip("打死一只怪回复的蓝。应明显大于「杀一只所需的蓝」，否则越打越亏")]
+        [Min(0)] public int killManaRestore = 20;
 
         // ------------------------------------------------------------------ 子弹
 
@@ -118,6 +129,14 @@ namespace EchoPuzzle.Dungeon
 
         public Color weaponColor = new Color(1f, 1f, 1f, 0.9f);
 
+        [Tooltip("瞄准辅助线长度（米）。瞄准时镜头被冻结、屏幕上没有准星，靠它指示子弹方向")]
+        [Min(1f)] public float guideLength = 8f;
+
+        [Tooltip("瞄准辅助线宽度（米）")]
+        [Min(0.002f)] public float guideWidth = 0.015f;
+
+        public Color guideColor = new Color(1f, 1f, 1f, 0.35f);
+
         // ------------------------------------------------------------------ 运行时
 
         /// <summary>是否正在瞄准。</summary>
@@ -140,10 +159,12 @@ namespace EchoPuzzle.Dungeon
         private Transform m_RingRoot;
         private Transform m_WeaponRoot;
         private Mesh      m_RingMesh;
+        private LineRenderer m_GuideLine;
 
         private Material m_RingMat;
         private Material m_WeaponMat;
         private Material m_BulletMat;
+        private Material m_GuideMat;
 
         private float   m_NextFireTime;
 
@@ -171,9 +192,11 @@ namespace EchoPuzzle.Dungeon
             m_RingMat   = EchoRuntimeMaterials.AimOverlay(ringColor);
             m_WeaponMat = EchoRuntimeMaterials.AimOverlay(weaponColor);
             m_BulletMat = EchoRuntimeMaterials.AimOverlay(bulletColor);
+            m_GuideMat  = EchoRuntimeMaterials.AimOverlay(guideColor);
 
             BuildRing();
             BuildWeaponModel();
+            BuildGuide();
 
             SetAimVisuals(false);
         }
@@ -186,10 +209,12 @@ namespace EchoPuzzle.Dungeon
 
             if (m_RingRoot   != null) Destroy(m_RingRoot.gameObject);
             if (m_WeaponRoot != null) Destroy(m_WeaponRoot.gameObject);
+            if (m_GuideLine  != null) Destroy(m_GuideLine.gameObject);
 
             if (m_RingMat   != null) Destroy(m_RingMat);
             if (m_WeaponMat != null) Destroy(m_WeaponMat);
             if (m_BulletMat != null) Destroy(m_BulletMat);
+            if (m_GuideMat  != null) Destroy(m_GuideMat);
         }
 
         // ------------------------------------------------------------------ 主循环
@@ -259,6 +284,7 @@ namespace EchoPuzzle.Dungeon
         {
             if (m_RingRoot   != null) m_RingRoot.gameObject.SetActive(on);
             if (m_WeaponRoot != null) m_WeaponRoot.gameObject.SetActive(on);
+            if (m_GuideLine  != null) m_GuideLine.enabled = on;
         }
 
         /// <summary>
@@ -319,16 +345,44 @@ namespace EchoPuzzle.Dungeon
                 m_WeaponRoot.position = pos;
                 m_WeaponRoot.rotation = Quaternion.LookRotation(dir, Vector3.up);
             }
+
+            // 瞄准辅助线：从枪口往前一段，告诉玩家「子弹会往哪飞」
+            // （瞄准时镜头被冻结、没有屏幕准星，这条线就是唯一的准星）
+            if (m_GuideLine != null)
+            {
+                Vector3 muzzle = MuzzlePosition(dir);
+                m_GuideLine.SetPosition(0, muzzle);
+                m_GuideLine.SetPosition(1, muzzle + dir * Mathf.Max(1f, guideLength));
+            }
         }
 
-        /// <summary>枪口位置：武器位置再往前伸一点，避免枪口埋在自己模型里。</summary>
+        /// <summary>
+        /// 枪口位置。
+        ///
+        /// ★ 这里之前是个 bug：直接取「玩家 + 方向 × (环半径 + 枪管长度)」= 身前 1.18 米，
+        ///   一旦玩家贴着墙站，枪口就落在**墙里面** —— 子弹一出生就撞墙消失，
+        ///   表现就是"明明对着怪打，却打不中"。
+        ///
+        ///   现在先朝这个方向探一下：墙比枪口近，就把出生点拉回到墙前一点点
+        ///   （最远不超过玩家身前 0.45 米，也就是胶囊体边缘外一点）。
+        /// </summary>
         private Vector3 MuzzlePosition(Vector3 dir)
         {
             if (m_Player == null) return transform.position;
 
-            Vector3 feet = m_Player.transform.position;
-            return feet + Vector3.up * weaponHeight
-                        + dir * (Mathf.Max(0.1f, weaponOrbitRadius) + Mathf.Max(0f, muzzleForward));
+            Vector3 center = m_Player.transform.position + Vector3.up * weaponHeight;
+
+            float want = Mathf.Max(0.1f, weaponOrbitRadius) + Mathf.Max(0f, muzzleForward);
+
+            // 探墙：别让枪口生在墙里 / 生在目标身后
+            if (Physics.SphereCast(center, 0.12f, dir, out RaycastHit hit, want,
+                                   ~((1 << 2) | (1 << 4) | (1 << 5)),
+                                   QueryTriggerInteraction.Ignore))
+            {
+                want = Mathf.Max(0.45f, hit.distance - 0.15f);
+            }
+
+            return center + dir * want;
         }
 
         // ------------------------------------------------------------------ 开火
@@ -418,6 +472,38 @@ namespace EchoPuzzle.Dungeon
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 mr.receiveShadows    = false;
             }
+        }
+
+        /// <summary>
+        /// 瞄准辅助线：一条从枪口往前的细线。
+        ///
+        /// 为什么要它：瞄准时镜头是冻结的（照文档），屏幕上没有准星，
+        /// 玩家只能靠"枪口朝哪"去猜子弹会往哪飞。这条线把猜测变成可见。
+        /// 和投石的轨迹预览是同一个思路，只是枪走直线，一段就够。
+        /// </summary>
+        private void BuildGuide()
+        {
+            var go = new GameObject("DungeonAimGuide");
+            go.transform.SetParent(transform, false);
+
+            m_GuideLine = go.AddComponent<LineRenderer>();
+            m_GuideLine.useWorldSpace      = true;
+            m_GuideLine.positionCount      = 2;
+            m_GuideLine.loop               = false;
+            m_GuideLine.textureMode        = LineTextureMode.Stretch;
+            m_GuideLine.alignment          = LineAlignment.View;
+            m_GuideLine.numCapVertices     = 0;
+            m_GuideLine.startWidth         = Mathf.Max(0.002f, guideWidth);
+            m_GuideLine.endWidth           = Mathf.Max(0.002f, guideWidth) * 0.4f;
+            m_GuideLine.shadowCastingMode  = UnityEngine.Rendering.ShadowCastingMode.Off;
+            m_GuideLine.receiveShadows     = false;
+            m_GuideLine.generateLightingData = false;
+
+            if (m_GuideMat != null) m_GuideLine.sharedMaterial = m_GuideMat;
+
+            m_GuideLine.SetPosition(0, Vector3.zero);
+            m_GuideLine.SetPosition(1, Vector3.zero);
+            m_GuideLine.enabled = false;
         }
 
         /// <summary>生成一个水平放置的圆环带（annulus）网格。</summary>
